@@ -33,6 +33,18 @@ class PointForce:
 
 
 @dataclass(frozen=True)
+class AcousticPointSource:
+    """Scalar load in the potential equation, with amplitude in cubic metres."""
+
+    stencil: PointStencil
+    amplitude_m3: float
+    wavelet: Ricker
+
+    def add_to(self, load: NDArray[np.float64], time_s: float) -> None:
+        self.stencil.add_load(load, np.array([self.wavelet(time_s) * self.amplitude_m3]))
+
+
+@dataclass(frozen=True)
 class Receiver:
     station_id: str
     stencil: PointStencil
@@ -45,6 +57,7 @@ class Channel:
 
 
 DISPLACEMENT_CHANNELS = (Channel("ux", "m"), Channel("uy", "m"), Channel("uz", "m"))
+PRESSURE_CHANNELS = (Channel("pressure", "Pa"),)
 
 
 @dataclass(frozen=True)
