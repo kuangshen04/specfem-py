@@ -29,8 +29,10 @@ def box_mesh(
     cell_shape: tuple[int, int, int],
     size: tuple[float, float, float],
     region_ids: NDArray[np.intp] | None = None,
+    *,
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> HexMesh:
-    """Generate a conforming axis-aligned mesh with its lower corner at the origin."""
+    """Generate a conforming axis-aligned mesh with the given lower corner."""
     if len(cell_shape) != 3 or any(
         not isinstance(n, (int, np.integer)) or n < 1 for n in cell_shape
     ):
@@ -38,9 +40,17 @@ def box_mesh(
     lengths = np.asarray(size, dtype=float)
     if lengths.shape != (3,) or not np.all(np.isfinite(lengths) & (lengths > 0)):
         raise ValueError("size must contain three finite positive lengths")
+    lower = np.asarray(origin, dtype=float)
+    if lower.shape != (3,) or not np.isfinite(lower).all():
+        raise ValueError("origin must contain three finite coordinates")
 
     vertex_shape = tuple(n + 1 for n in cell_shape)
-    axes = [np.linspace(0.0, length, n) for length, n in zip(lengths, vertex_shape)]
+    axes = [
+        start + np.linspace(0.0, length, n)
+        for start, length, n in zip(lower, lengths, vertex_shape)
+    ]
+    if any(not np.isfinite(axis).all() or np.any(np.diff(axis) <= 0) for axis in axes):
+        raise ValueError("box vertices must be finite and strictly increasing on each axis")
     vertices = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
 
     cells = np.indices(cell_shape).reshape(3, -1).T
