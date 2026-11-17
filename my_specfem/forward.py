@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from .acoustic import AcousticOperator
+from .acoustic import AcousticOperator, pressure_from_potential_acceleration
 from .acquisition import (
     DISPLACEMENT_CHANNELS,
     PRESSURE_CHANNELS,
@@ -75,7 +75,12 @@ def run_acoustic(
     (seismogram,) = _march_and_sample(
         potential,
         acceleration,
-        (_Observation(receivers, PRESSURE_CHANNELS, lambda state: -state.qddot),),
+        (
+            _Observation(
+                receivers, PRESSURE_CHANNELS,
+                lambda state: pressure_from_potential_acceleration(state.qddot),
+            ),
+        ),
         t0=t0, dt=dt, steps=steps,
     )
     return seismogram
@@ -117,7 +122,7 @@ def run_coupled(
             solid_source.add_to(solid_load, time)
         interface.add_fluid_load(fluid_load, displacement)
         chi_ddot = acoustic.acceleration(chi, fluid_load)
-        interface.add_solid_load(solid_load, pressure=-chi_ddot)
+        interface.add_solid_load(solid_load, pressure_from_potential_acceleration(chi_ddot))
         u_ddot = elastic.acceleration(displacement, solid_load)
         return np.concatenate((chi_ddot.ravel(), u_ddot.ravel()))
 
@@ -127,7 +132,9 @@ def run_coupled(
         (
             _Observation(
                 fluid_receivers, PRESSURE_CHANNELS,
-                lambda state: -state.qddot[:fluid_size].reshape(fluid_shape),
+                lambda state: pressure_from_potential_acceleration(
+                    state.qddot[:fluid_size].reshape(fluid_shape)
+                ),
             ),
             _Observation(
                 solid_receivers, DISPLACEMENT_CHANNELS,

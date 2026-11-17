@@ -7,6 +7,13 @@ from numpy.typing import NDArray
 from .sem import SpectralGrid
 
 
+def pressure_from_potential_acceleration(
+    potential_acceleration: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Convert the second time derivative of the scalar potential to pressure in Pa."""
+    return -potential_acceleration
+
+
 @dataclass(frozen=True)
 class AcousticMaterial:
     density: float
