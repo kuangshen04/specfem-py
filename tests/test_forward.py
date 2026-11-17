@@ -10,39 +10,39 @@ from my_specfem.acquisition import Channel, Seismogram
 from my_specfem.elastic import IsotropicMaterial, elastic_operator
 from my_specfem.io import write_seismogram
 from my_specfem.mesh import box_mesh
-from my_specfem.sem import discretize
+from my_specfem.sem import discretize, spectral_domain
 from my_specfem.time_integration import initialize, newmark_step
 
 
 class SpectralElementTests(unittest.TestCase):
     def setUp(self):
         self.mesh = box_mesh((2, 1, 1), (8.0, 3.0, 2.0), np.array([[[0]], [[1]]]))
-        self.grid = discretize(self.mesh)
+        self.domain = spectral_domain(discretize(self.mesh))
         self.materials = {
             0: IsotropicMaterial(2000.0, 2800.0, 1500.0),
             1: IsotropicMaterial(3000.0, 3500.0, 1900.0),
         }
-        self.operator = elastic_operator(self.grid, self.mesh.region_ids, self.materials)
+        self.operator = elastic_operator(self.domain, self.materials)
 
     def test_shared_face_mass_assembly(self):
-        mapping = self.grid.local_to_global
+        mapping = self.domain.element_to_field_node
         self.assertEqual(len(self.mesh.boundary_faces), 10)
-        self.assertEqual(self.grid.node_count, 225)
+        self.assertEqual(self.domain.node_count, 225)
         shared_face = mapping[0, -1]
         np.testing.assert_array_equal(shared_face, mapping[1, 0])
         expected = (
-            self.materials[0].density * self.grid.volume_weights[0, -1]
-            + self.materials[1].density * self.grid.volume_weights[1, 0]
+            self.materials[0].density * self.domain.volume_weights[0, -1]
+            + self.materials[1].density * self.domain.volume_weights[1, 0]
         )
         np.testing.assert_allclose(self.operator.mass[shared_face], expected)
         self.assertAlmostEqual(self.operator.mass.sum(), (2000.0 + 3000.0) * 24.0)
 
     def test_gradient_and_elastic_energy(self):
-        coordinates = self.grid.coordinates
+        coordinates = self.domain.coordinates
         # A non-symmetric displacement gradient checks both component and derivative axes.
         gradient = np.array([[0.5, 0.2, 0.3], [0.1, 0.4, -0.2], [0.0, 0.1, -0.1]])
         displacement = coordinates @ gradient.T
-        actual = self.grid.gradient(self.grid.gather(displacement))
+        actual = self.domain.gradient(self.domain.gather(displacement))
         np.testing.assert_allclose(actual, np.broadcast_to(gradient, actual.shape), atol=1e-13)
         stiffness = self.operator.stiffness(displacement)
         rigid = self.operator.stiffness(np.ones_like(displacement))
@@ -61,9 +61,9 @@ class SpectralElementTests(unittest.TestCase):
 
     def test_point_load_and_receiver_pairing(self):
         position = (5.1, 0.7, 1.6)
-        stencil = self.grid.locate(position)
-        np.testing.assert_allclose(stencil.sample(self.grid.coordinates), position)
-        u = np.random.default_rng(42).normal(size=(self.grid.node_count, 3))
+        stencil = self.domain.locate(position)
+        np.testing.assert_allclose(stencil.sample(self.domain.coordinates), position)
+        u = np.random.default_rng(42).normal(size=(self.domain.node_count, 3))
         point_force = np.array([3.0, -2.0, 1.0])
         load = np.zeros_like(u)
         stencil.add_load(load, point_force)

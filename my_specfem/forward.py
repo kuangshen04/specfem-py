@@ -35,7 +35,7 @@ def run_elastic(
     dt: float,
     steps: int,
 ) -> Seismogram:
-    shape = (operator.grid.node_count, 3)
+    shape = (operator.domain.node_count, 3)
     force = np.zeros(shape)
 
     def acceleration(displacement: NDArray[np.float64], time: float) -> NDArray[np.float64]:
@@ -62,7 +62,7 @@ def run_acoustic(
     steps: int,
     initial_potential: NDArray[np.float64] | None = None,
 ) -> Seismogram:
-    shape = (operator.grid.node_count, 1)
+    shape = (operator.domain.node_count, 1)
     potential = _initial_scalar_field(initial_potential, shape)
     load = np.zeros(shape)
 
@@ -102,9 +102,9 @@ def run_coupled(
     solid_source: PointForce | None = None,
 ) -> tuple[Seismogram, Seismogram]:
     """Advance both fields and return fluid pressure followed by solid displacement."""
-    fluid_size = acoustic.grid.node_count
+    fluid_size = acoustic.domain.node_count
     fluid_shape = (fluid_size, 1)
-    solid_shape = (elastic.grid.node_count, 3)
+    solid_shape = (elastic.domain.node_count, 3)
     potential = _initial_scalar_field(initial_potential, fluid_shape)
     potential_rate = _initial_scalar_field(initial_potential_rate, fluid_shape)
     solid_zero = np.zeros(np.prod(solid_shape))

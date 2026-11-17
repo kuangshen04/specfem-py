@@ -17,12 +17,20 @@ class BoundaryFace:
 
 
 @dataclass(frozen=True)
+class InteriorFace:
+    lower_element: int
+    upper_element: int
+    axis: int
+
+
+@dataclass(frozen=True)
 class HexMesh:
     vertices: NDArray[np.float64]
     connectivity: NDArray[np.intp]
     cell_shape: tuple[int, int, int]
     region_ids: NDArray[np.intp]
     boundary_faces: tuple[BoundaryFace, ...]
+    interior_faces: tuple[InteriorFace, ...]
 
 
 def box_mesh(
@@ -71,4 +79,12 @@ def box_mesh(
         for side, index in enumerate((0, n - 1))
         if cell[axis] == index
     )
-    return HexMesh(vertices, connectivity, cell_shape, regions, faces)
+    element_ids = np.arange(len(cells)).reshape(cell_shape)
+    interior_faces = []
+    for axis in range(3):
+        slabs = np.moveaxis(element_ids, axis, 0)
+        interior_faces.extend(
+            InteriorFace(int(lower), int(upper), axis)
+            for lower, upper in zip(slabs[:-1].flat, slabs[1:].flat)
+        )
+    return HexMesh(vertices, connectivity, cell_shape, regions, faces, tuple(interior_faces))

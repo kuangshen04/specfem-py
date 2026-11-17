@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from .sem import SpectralGrid
+from .sem import SpectralDomain
 
 
 def pressure_from_potential_acceleration(
@@ -31,15 +31,15 @@ class AcousticMaterial:
 
 @dataclass(frozen=True)
 class AcousticOperator:
-    grid: SpectralGrid
+    domain: SpectralDomain
     mass: NDArray[np.float64]
     inverse_density: NDArray[np.float64]
 
     def stiffness(self, potential: NDArray[np.float64]) -> NDArray[np.float64]:
-        gradient = self.grid.gradient(self.grid.gather(potential))
+        gradient = self.domain.gradient(self.domain.gather(potential))
         flux = self.inverse_density[:, None, None, None, None, None] * gradient
         # A rigid wall has zero normal flux and contributes no boundary integral.
-        return self.grid.assemble(self.grid.integrate_gradient(flux))
+        return self.domain.assemble(self.domain.integrate_gradient(flux))
 
     def acceleration(
         self, potential: NDArray[np.float64], load: NDArray[np.float64]
@@ -48,17 +48,15 @@ class AcousticOperator:
 
 
 def acoustic_operator(
-    grid: SpectralGrid,
-    region_ids: NDArray[np.intp],
+    domain: SpectralDomain,
     materials: Mapping[int, AcousticMaterial],
 ) -> AcousticOperator:
-    if region_ids.shape != (len(grid.lower),):
-        raise ValueError("one material region is required per element")
+    region_ids = domain.grid.mesh.region_ids[domain.element_ids]
     missing = set(region_ids).difference(materials)
     if missing:
         raise ValueError(f"undefined material regions: {sorted(missing)}")
     element_materials = [materials[region] for region in region_ids]
     inverse_bulk = np.array([1 / material.bulk_modulus for material in element_materials])
-    mass = grid.assemble(inverse_bulk[:, None, None, None] * grid.volume_weights)
+    mass = domain.assemble(inverse_bulk[:, None, None, None] * domain.volume_weights)
     inverse_density = np.array([1 / material.density for material in element_materials])
-    return AcousticOperator(grid, mass, inverse_density)
+    return AcousticOperator(domain, mass, inverse_density)

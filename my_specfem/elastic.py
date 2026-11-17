@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from .sem import SpectralGrid
+from .sem import SpectralDomain
 
 
 @dataclass(frozen=True)
@@ -48,21 +48,21 @@ def isotropic_stress(
 
 @dataclass(frozen=True)
 class ElasticOperator:
-    grid: SpectralGrid
+    domain: SpectralDomain
     mass: NDArray[np.float64]
     lame_lambda: NDArray[np.float64]
     shear_modulus: NDArray[np.float64]
 
     def stiffness(self, displacement: NDArray[np.float64]) -> NDArray[np.float64]:
         """Compute Ku by integrating stress against the test-function gradient."""
-        gradient = self.grid.gradient(self.grid.gather(displacement))
+        gradient = self.domain.gradient(self.domain.gather(displacement))
         stress = isotropic_stress(
             gradient,
             self.lame_lambda[:, None, None, None],
             self.shear_modulus[:, None, None, None],
         )
         # The boundary integral is zero on every traction-free exterior face.
-        return self.grid.assemble(self.grid.integrate_gradient(stress))
+        return self.domain.assemble(self.domain.integrate_gradient(stress))
 
     def acceleration(
         self, displacement: NDArray[np.float64], force: NDArray[np.float64]
@@ -71,18 +71,16 @@ class ElasticOperator:
 
 
 def elastic_operator(
-    grid: SpectralGrid,
-    region_ids: NDArray[np.intp],
+    domain: SpectralDomain,
     materials: Mapping[int, IsotropicMaterial],
 ) -> ElasticOperator:
-    if region_ids.shape != (len(grid.lower),):
-        raise ValueError("one material region is required per element")
+    region_ids = domain.grid.mesh.region_ids[domain.element_ids]
     missing = set(region_ids).difference(materials)
     if missing:
         raise ValueError(f"undefined material regions: {sorted(missing)}")
     element_materials = [materials[region] for region in region_ids]
     density = np.array([material.density for material in element_materials])
-    mass = grid.assemble(density[:, None, None, None] * grid.volume_weights)
+    mass = domain.assemble(density[:, None, None, None] * domain.volume_weights)
     lam = np.array([material.lame_lambda for material in element_materials])
     mu = np.array([material.shear_modulus for material in element_materials])
-    return ElasticOperator(grid, mass, lam, mu)
+    return ElasticOperator(domain, mass, lam, mu)

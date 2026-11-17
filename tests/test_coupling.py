@@ -3,21 +3,32 @@ import unittest
 import numpy as np
 
 from main import coupled_box
-from my_specfem.coupling import planar_interface
+from my_specfem.acoustic import AcousticMaterial, acoustic_operator
+from my_specfem.coupling import fluid_solid_interface
+from my_specfem.elastic import IsotropicMaterial, elastic_operator
 from my_specfem.mesh import box_mesh
-from my_specfem.sem import discretize
+from my_specfem.sem import discretize, spectral_domain
 
 
 class CouplingTests(unittest.TestCase):
     def test_interface_loads_with_shared_edge(self):
-        fluid_mesh = box_mesh((1, 2, 1), (2.0, 6.0, 4.0))
-        solid_mesh = box_mesh((1, 2, 1), (3.0, 6.0, 4.0), origin=(2.0, 0.0, 0.0))
-        fluid, solid = discretize(fluid_mesh), discretize(solid_mesh)
-        fluid_faces = tuple(face for face in fluid_mesh.boundary_faces if face.axis == 0 and face.side == 1)
-        solid_faces = tuple(face for face in solid_mesh.boundary_faces if face.axis == 0 and face.side == 0)
-        interface = planar_interface(fluid, fluid_faces, solid, solid_faces[::-1])
+        mesh = box_mesh((2, 2, 1), (4.0, 6.0, 4.0), np.array([[[0], [0]], [[1], [1]]]))
+        grid = discretize(mesh)
+        fluid = spectral_domain(grid, np.array([0, 1]))
+        solid = spectral_domain(grid, np.array([2, 3]))
+        interface = fluid_solid_interface(fluid, solid)
 
-        np.testing.assert_array_equal(interface.solid_normal, [-1, 0, 0])
+        self.assertIs(fluid.grid, solid.grid)
+        self.assertEqual(grid.node_count, 405)
+        self.assertEqual(fluid.node_count, 225)
+        self.assertEqual(solid.node_count, 225)
+        np.testing.assert_array_equal(
+            fluid.geometry_nodes[interface.fluid_nodes],
+            solid.geometry_nodes[interface.solid_nodes],
+        )
+        np.testing.assert_array_equal(
+            interface.solid_normals, np.broadcast_to([-1, 0, 0], (50, 3))
+        )
         np.testing.assert_allclose(interface.surface_weights.sum(), 24.0)
         self.assertEqual(len(np.unique(interface.fluid_nodes)), 45)
         self.assertEqual(len(interface.fluid_nodes), 50)
@@ -39,11 +50,40 @@ class CouplingTests(unittest.TestCase):
         interface.add_solid_load(solid_load, pressure)
         np.testing.assert_allclose(np.sum(pressure * fluid_load), np.sum(displacement * solid_load))
 
-        with self.assertRaisesRegex(ValueError, "same GLL degree"):
-            planar_interface(fluid, fluid_faces, discretize(solid_mesh, degree=3), solid_faces)
-        shifted = box_mesh((1, 2, 1), (3.0, 6.0, 4.0), origin=(2.1, 0.0, 0.0))
-        with self.assertRaisesRegex(ValueError, "coordinates must match"):
-            planar_interface(fluid, fluid_faces, discretize(shifted), solid_faces)
+        water = AcousticMaterial(1000.0, 1500.0)
+        rock = IsotropicMaterial(2500.0, 3000.0, 1500.0)
+        acoustic = acoustic_operator(fluid, {0: water})
+        elastic = elastic_operator(solid, {1: rock})
+        self.assertEqual(acoustic.mass.shape, (225,))
+        self.assertEqual(elastic.mass.shape, (225,))
+        self.assertTrue(np.all(acoustic.mass > 0))
+        self.assertTrue(np.all(elastic.mass > 0))
+        np.testing.assert_allclose(acoustic.mass.sum(), 48.0 / water.bulk_modulus)
+        np.testing.assert_allclose(elastic.mass.sum(), 48.0 * rock.density)
+        with self.assertRaisesRegex(ValueError, "outside this field domain"):
+            fluid.locate((3.0, 1.0, 2.0))
+        with self.assertRaisesRegex(ValueError, "domain node count"):
+            fluid.gather(np.zeros((grid.node_count, 1)))
+        with self.assertRaisesRegex(ValueError, "domain elements and GLL axes"):
+            fluid.assemble(grid.volume_weights)
+        with self.assertRaisesRegex(ValueError, "share a spectral grid"):
+            fluid_solid_interface(fluid, spectral_domain(discretize(mesh), np.array([2, 3])))
+        with self.assertRaisesRegex(ValueError, "exactly one coupled domain"):
+            fluid_solid_interface(fluid, spectral_domain(grid, np.array([1, 2, 3])))
+
+    def test_stepped_interface_with_noncontiguous_domain(self):
+        grid = discretize(box_mesh((2, 2, 1), (4.0, 6.0, 4.0)))
+        fluid = spectral_domain(grid, np.array([3, 0, 1]))
+        solid = spectral_domain(grid, np.array([2]))
+        interface = fluid_solid_interface(fluid, solid)
+        np.testing.assert_array_equal(
+            fluid.geometry_nodes[interface.fluid_nodes],
+            solid.geometry_nodes[interface.solid_nodes],
+        )
+        np.testing.assert_array_equal(
+            np.unique(interface.solid_normals, axis=0), [[-1, 0, 0], [0, 1, 0]]
+        )
+        np.testing.assert_allclose(interface.surface_weights.sum(), 3.0 * 4.0 + 2.0 * 4.0)
 
     def test_plane_pulse_reflection_and_transmission(self):
         pressure, displacement = coupled_box()

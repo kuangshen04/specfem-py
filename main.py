@@ -5,61 +5,60 @@ import numpy as np
 
 from my_specfem.acoustic import AcousticMaterial, acoustic_operator
 from my_specfem.acquisition import AcousticPointSource, PointForce, Receiver, Ricker, Seismogram
-from my_specfem.coupling import planar_interface
+from my_specfem.coupling import fluid_solid_interface
 from my_specfem.elastic import IsotropicMaterial, elastic_operator
 from my_specfem.forward import run_acoustic, run_coupled, run_elastic
 from my_specfem.io import write_seismogram
-from my_specfem.mesh import HexMesh, box_mesh
-from my_specfem.sem import SpectralGrid, discretize
+from my_specfem.mesh import box_mesh
+from my_specfem.sem import SpectralDomain, discretize, spectral_domain
 
 
 SOURCE_POSITION = (87.0, 86.0, 87.0)
 
 
-def _box_setup() -> tuple[HexMesh, SpectralGrid, tuple[Receiver, ...]]:
+def _box_setup() -> tuple[SpectralDomain, tuple[Receiver, ...]]:
     mesh = box_mesh((4, 2, 2), (400.0, 200.0, 200.0))
-    grid = discretize(mesh)
+    domain = spectral_domain(discretize(mesh))
     receivers = (
-        Receiver("STA01", grid.locate((143.0, 92.0, 88.0))),
-        Receiver("STA02", grid.locate((269.0, 114.0, 93.0))),
+        Receiver("STA01", domain.locate((143.0, 92.0, 88.0))),
+        Receiver("STA02", domain.locate((269.0, 114.0, 93.0))),
     )
-    return mesh, grid, receivers
+    return domain, receivers
 
 
 def homogeneous_box(*, dt: float = 0.001, steps: int = 200) -> Seismogram:
-    mesh, grid, receivers = _box_setup()
+    domain, receivers = _box_setup()
     materials = {0: IsotropicMaterial(density=2500.0, vp=3000.0, vs=1700.0)}
-    operator = elastic_operator(grid, mesh.region_ids, materials)
+    operator = elastic_operator(domain, materials)
     source = PointForce(
-        grid.locate(SOURCE_POSITION), np.array([1.0e8, 0.0, 0.0]), Ricker(20.0)
+        domain.locate(SOURCE_POSITION), np.array([1.0e8, 0.0, 0.0]), Ricker(20.0)
     )
     return run_elastic(operator, source, receivers, t0=-0.075, dt=dt, steps=steps)
 
 
 def acoustic_box(*, dt: float = 0.001, steps: int = 200) -> Seismogram:
-    mesh, grid, receivers = _box_setup()
+    domain, receivers = _box_setup()
     materials = {0: AcousticMaterial(density=1000.0, vp=1500.0)}
-    operator = acoustic_operator(grid, mesh.region_ids, materials)
-    source = AcousticPointSource(grid.locate(SOURCE_POSITION), 0.01, Ricker(20.0))
+    operator = acoustic_operator(domain, materials)
+    source = AcousticPointSource(domain.locate(SOURCE_POSITION), 0.01, Ricker(20.0))
     return run_acoustic(operator, source, receivers, t0=-0.075, dt=dt, steps=steps)
 
 
 def coupled_box() -> tuple[Seismogram, Seismogram]:
-    shape = (24, 1, 1)
-    size = (600.0, 80.0, 80.0)
-    fluid_mesh = box_mesh(shape, size)
-    solid_mesh = box_mesh(shape, size, origin=(size[0], 0.0, 0.0))
-    fluid, solid = discretize(fluid_mesh), discretize(solid_mesh)
-    fluid_faces = tuple(face for face in fluid_mesh.boundary_faces if face.axis == 0 and face.side == 1)
-    solid_faces = tuple(face for face in solid_mesh.boundary_faces if face.axis == 0 and face.side == 0)
-    interface = planar_interface(fluid, fluid_faces, solid, solid_faces)
-
+    regions = np.zeros((48, 1, 1), dtype=np.intp)
+    regions[24:] = 1
+    mesh = box_mesh(regions.shape, (1200.0, 80.0, 80.0), regions)
+    grid = discretize(mesh)
     water = AcousticMaterial(density=1000.0, vp=1500.0)
     # Zero lambda makes the sides traction-free for a planar longitudinal wave.
     solid_vp = 3000.0
     material = IsotropicMaterial(density=2500.0, vp=solid_vp, vs=solid_vp / np.sqrt(2))
-    acoustic = acoustic_operator(fluid, fluid_mesh.region_ids, {0: water})
-    elastic = elastic_operator(solid, solid_mesh.region_ids, {0: material})
+    fluids, solids = {0: water}, {1: material}
+    fluid = spectral_domain(grid, np.flatnonzero(np.isin(mesh.region_ids, tuple(fluids))))
+    solid = spectral_domain(grid, np.flatnonzero(np.isin(mesh.region_ids, tuple(solids))))
+    interface = fluid_solid_interface(fluid, solid)
+    acoustic = acoustic_operator(fluid, fluids)
+    elastic = elastic_operator(solid, solids)
     fluid_receivers = (Receiver("FLUID", fluid.locate((481.0, 29.0, 31.0))),)
     solid_receivers = (Receiver("SOLID", solid.locate((751.0, 29.0, 31.0))),)
 

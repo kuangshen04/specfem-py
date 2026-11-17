@@ -11,22 +11,24 @@ from my_specfem.acquisition import AcousticPointSource, Receiver, Ricker
 from my_specfem.forward import run_acoustic
 from my_specfem.io import write_seismogram
 from my_specfem.mesh import box_mesh
-from my_specfem.sem import discretize
+from my_specfem.sem import discretize, spectral_domain
 
 
 class AcousticTests(unittest.TestCase):
     def test_lumped_mass_and_scalar_point_load(self):
         mesh = box_mesh((2, 1, 1), (120.0, 40.0, 30.0), np.array([[[0]], [[1]]]))
-        grid = discretize(mesh)
+        domain = spectral_domain(discretize(mesh))
         materials = {0: AcousticMaterial(1000.0, 1500.0), 1: AcousticMaterial(1100.0, 1600.0)}
-        operator = acoustic_operator(grid, mesh.region_ids, materials)
+        operator = acoustic_operator(domain, materials)
         expected_mass = sum(60 * 40 * 30 / material.bulk_modulus for material in materials.values())
         np.testing.assert_allclose(operator.mass.sum(), expected_mass, rtol=1e-13)
-        np.testing.assert_allclose(operator.stiffness(np.ones((grid.node_count, 1))), 0, atol=1e-14)
+        np.testing.assert_allclose(
+            operator.stiffness(np.ones((domain.node_count, 1))), 0, atol=1e-14
+        )
 
-        stencil = grid.locate((23.0, 17.0, 12.0))
+        stencil = domain.locate((23.0, 17.0, 12.0))
         source = AcousticPointSource(stencil, 0.01, Ricker(20.0))
-        load = np.zeros((grid.node_count, 1))
+        load = np.zeros((domain.node_count, 1))
         source.add_to(load, 0.0)
         np.testing.assert_allclose(load.sum(), 0.01)
         trace = run_acoustic(operator, source, (Receiver("A", stencil),), t0=0.0, dt=0.001, steps=1)
@@ -37,14 +39,14 @@ class AcousticTests(unittest.TestCase):
         length = 120.0
         vp = 1500.0
         mesh = box_mesh((4, 1, 1), (length, 40.0, 30.0))
-        grid = discretize(mesh)
-        operator = acoustic_operator(grid, mesh.region_ids, {0: AcousticMaterial(1000.0, vp)})
+        domain = spectral_domain(discretize(mesh))
+        operator = acoustic_operator(domain, {0: AcousticMaterial(1000.0, vp)})
         wave_number = np.pi / length
         omega = vp * wave_number
-        potential = np.cos(wave_number * grid.coordinates[:, :1])
+        potential = np.cos(wave_number * domain.coordinates[:, :1])
         position = (23.0, 17.0, 12.0)
         trace = run_acoustic(
-            operator, None, (Receiver("A", grid.locate(position)),),
+            operator, None, (Receiver("A", domain.locate(position)),),
             t0=0.0, dt=0.00025, steps=640, initial_potential=potential,
         )
         # Neumann fundamental mode, with p = -d²chi/dt² and zero initial velocity.
